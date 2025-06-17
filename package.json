@@ -1,19 +1,26 @@
 {
-  "name": "multi-sign-large-package-payload-creator",
-  "version": "1.0.0",
+  "name": "large-package-payload-creator",
+  "version": "0.1.0",
   "description": "",
-  "main": "index.js",
   "type": "commonjs",
   "bin": {
-    "multi-sign-cli": "dist/cli.js"
+    "large-payload-cli": "dist/cli.js"
   },
   "scripts": {
     "build": "tsup",
     "prestart": "pnpm build",
     "start": "node dist/cli.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "aptos",
+    "move",
+    "cli",
+    "multi-sign",
+    "large-package",
+    "blockchain",
+    "payload"
+  ],
+  "author": "wgb5445 <919603023@qq.com>",
   "license": "ISC",
   "packageManager": "pnpm@10.11.0",
   "dependencies": {
@@ -24,5 +31,12 @@
     "@types/node": "^20.11.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
   }
 }
