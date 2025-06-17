@@ -1,6 +1,6 @@
 {
   "name": "large-package-payload-creator",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A tool for splitting large Aptos Move contract packages into multiple JSON payloads for multi-signature or object deployment. Supports batch upload, upgrade mode, and custom network/RPC. Ideal for developers deploying large Move packages on Aptos.",
   "type": "commonjs",
   "bin": {
