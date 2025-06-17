@@ -1,0 +1,28 @@
+{
+  "name": "multi-sign-large-package-payload-creator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "commonjs",
+  "bin": {
+    "multi-sign-cli": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prestart": "pnpm build",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.11.0",
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^2.0.1",
+    "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0"
+  }
+}

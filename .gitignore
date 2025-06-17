@@ -1,0 +1,34 @@
+# Node.js
+node_modules/
+.env
+.env.*
+dist/
+build/
+sources/
+.aptos/
+coverage/
+.nyc_output/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+*.tsbuildinfo
+.idea/
+.vscode/
+*.local
+*.sublime*
+*.swp
+*.tmp
+*.bak
+*.orig
+*.rej
+Move.toml
+# OS
+Thumbs.db
+Desktop.ini
+# Optional: lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
