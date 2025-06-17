@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsup",
     "prestart": "pnpm build",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "prepublish": "pnpm build"
   },
   "keywords": [
     "aptos",
