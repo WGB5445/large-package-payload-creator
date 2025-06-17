@@ -40,7 +40,7 @@ interface Payload {
 // 构建配置接口
 interface BuildConfig {
   projectDir: string;
-  contractName?: string;
+  contractAddressName?: string;
   senderAddress?: string;
   namedAddresses?: string;
 }
@@ -66,8 +66,8 @@ function buildNamedAddressesArg(config: BuildConfig): string {
   if (config.namedAddresses) {
     return `--named-addresses ${config.namedAddresses}`;
   }
-  if (config.contractName && config.senderAddress) {
-    return `--named-addresses ${config.contractName}=${config.senderAddress}`;
+  if (config.contractAddressName && config.senderAddress) {
+    return `--named-addresses ${config.contractAddressName}=${config.senderAddress}`;
   }
   return '';
 }
@@ -252,7 +252,7 @@ export function registerCreateCommand(program: Command) {
     .requiredOption('--multi-sign <boolean>', 'Whether to use multi-sign send (true/false)', false)
     .requiredOption('--large-package <boolean>', 'Whether to use large package send (true/false)', true)
     .requiredOption('--sender-address <address>', 'The sender address, required if used')
-    .option('--contract-name <string>', 'The contract address name , required if used')
+    .option('--contract-address-name <string>', 'The contract address name , required if used, e.g. "Move.tmol contract = 0x1 is <contract>"')
     .option('--rpc <url>', 'Custom RPC endpoint URL')
     .option('--network <network>', 'Network to use (mainnet, testnet, devnet)', 'devnet')
     .option('--large-package-address <address>', 'Address of the large package contract', '0x7')
@@ -299,7 +299,7 @@ export function registerCreateCommand(program: Command) {
         process.exit(1);
       }
 
-      if (!options.contractName) {
+      if (!options.contractAddressName) {
         console.error('Error: --contract-name is required when using this option');
         process.exit(1);
       }
@@ -344,7 +344,7 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
   // 第一步：先 build 一次，拿到 metadataChunk/codeChunks
   const buildConfig: BuildConfig = {
     projectDir,
-    contractName: options.contractName,
+    contractAddressName: options.contractAddressName,
     senderAddress: options.senderAddress
   };
   
@@ -387,7 +387,7 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
 
   const newBuildConfig: BuildConfig = {
     projectDir,
-    contractName: options.contractName,
+    contractAddressName: options.contractAddressName,
     senderAddress: finalAddress
   };
   
@@ -399,7 +399,7 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
 function handleNormalMode(projectDir: string, options: any, maxSize: number): void {
   const buildConfig: BuildConfig = {
     projectDir,
-    contractName: options.contractName,
+    contractAddressName: options.contractAddressName,
     senderAddress: options.senderAddress
   };
   

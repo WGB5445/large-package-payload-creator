@@ -5,8 +5,8 @@ import { registerCreateCommand } from './commands';
 const program = new Command();
 
 program
-  .name('multi-sign-cli')
-  .description('A CLI tool for multi-sign large package payload creation')
+  .name('large-package-payload-creator')
+  .description('A CLI tool for large package payload creation')
   .version('1.0.0');
 
 registerCreateCommand(program);
