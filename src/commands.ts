@@ -43,6 +43,7 @@ interface BuildConfig {
   contractAddressName?: string;
   senderAddress?: string;
   namedAddresses?: string;
+additionalArgs?: string; 
 }
 
 // 解析 Move.toml 获取包名
@@ -121,7 +122,7 @@ function readBuildArtifacts(projectDir: string, packageName: string, moduleNames
 // 统一的构建函数
 function buildMoveProject(config: BuildConfig): BuildResult {
   const namedArg = buildNamedAddressesArg(config);
-  const buildCommand = `aptos move build --save-metadata ${namedArg}`.trim();
+  const buildCommand = `aptos move build --save-metadata ${namedArg} ${config.additionalArgs? config.additionalArgs: ""}`.trim();
   
   const buildOutput = execSync(buildCommand, {
     cwd: config.projectDir,
@@ -226,7 +227,7 @@ function writePayloads(payloads: Payload[], outDir: string): void {
     fs.writeFileSync(outPath, JSON.stringify(payload, null, 2), 'utf-8');
   });
   
-  console.log(`已生成 ${payloads.length} 个 payload JSON 文件，保存在 ${outDir}`);
+  console.log(`Generated ${payloads.length} payload JSON files, saved in ${outDir}`);
 }
 
 // 构建并生成 payloads
@@ -248,40 +249,23 @@ export function registerCreateCommand(program: Command) {
     .command('create')
     .description('Create a new multi-sign payload')
     .option('-d, --dir <directory>', 'Project directory', process.cwd())
-    .requiredOption('--deploy-object <boolean>', 'Whether to use object send (true/false)', false)
-    .requiredOption('--multi-sign <boolean>', 'Whether to use multi-sign send (true/false)', false)
-    .requiredOption('--large-package <boolean>', 'Whether to use large package send (true/false)', true)
+    .option('--deploy-object <boolean>', 'Whether to use object send (true/false)', false)
+    .option('--large-package <boolean>', 'Whether to use large package send (true/false)', true)
     .requiredOption('--sender-address <address>', 'The sender address, required if used')
-    .option('--contract-address-name <string>', 'The contract address name , required if used, e.g. "Move.tmol contract = 0x1 is <contract>"')
+    .requiredOption('--contract-address-name <string>', 'The contract address name , required if used, e.g. "Move.tmol contract = 0x1 is <contract>"')
     .option('--rpc <url>', 'Custom RPC endpoint URL')
     .option('--network <network>', 'Network to use (mainnet, testnet, devnet)', 'devnet')
-    .option('--large-package-address <address>', 'Address of the large package contract', '0x7')
-    .option('--upgrade <boolean>', 'Whether this is an upgrade operation (true/false)', 'false')
-    .option('--object-address <address>', 'Object address for upgrade operations, required when --upgrade is true')
+    .option('--large-package-address <address>', 'Address of the large package contract, if devent is 0x7, testnet/mainnet is 0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7', '0x7')
+    .option('--object-address <address>', 'Object address for upgrade operations')
+    .option('--multi-sign <boolean>', 'Whether to use multi-sign mode (true/false)', false)
+    // 传递给 aptos-cli 的额外参数
+    .option('--additional-args <string>', 'Additional arguments to pass to aptos-cli')
     .action((options, command) => {
       if (process.argv.slice(2).length === 1) {
         command.help();
         return;
       }
 
-      console.log('Input:', options.input);
-      console.log('Output:', options.output);
-      console.log('Deploy Object:', options.deployObject);
-      console.log('Multi Sign:', options.multiSign);
-      console.log('Large Package:', options.largePackage);
-      console.log('Large Package Address:', options.largePackageAddress);
-      console.log('Network:', options.network);
-      console.log('Upgrade:', options.upgrade);
-      if (options.objectAddress) {
-        console.log('Object Address:', options.objectAddress);
-      }
-      if (options.rpc) {
-        console.log('Custom RPC:', options.rpc);
-      }
-      if (options.multiSign === 'true') {
-        console.log('Multi Sign Address:', options.multiSignAddress);
-      }
-      
       // 验证环境和参数
       if (!checkAptosCliExists()) {
         console.error('The "aptos" CLI is not found in your system. Please install it from https://aptos.dev/en/build/cli');
@@ -294,19 +278,8 @@ export function registerCreateCommand(program: Command) {
         process.exit(1);
       }
 
-      if (options.deployObject === 'true' && !options.senderAddress) {
-        console.error('Error: --sender-address is required when --deploy-object is true');
-        process.exit(1);
-      }
-
       if (!options.contractAddressName) {
-        console.error('Error: --contract-name is required when using this option');
-        process.exit(1);
-      }
-
-      // 验证升级选项
-      if (options.deployObject === 'true' && options.upgrade === 'true' && !options.objectAddress && AccountAddress.fromString(options.senderAddress).toString()) {
-        console.error('Error: --object-address is required when --deploy-object is true and --upgrade is true');
+        console.error('Error: --contract-address-name is required when using this option');
         process.exit(1);
       }
 
@@ -316,7 +289,22 @@ export function registerCreateCommand(program: Command) {
         process.exit(1);
       }
 
-      // 获取网络URL
+      if (options.objectAddress){
+        options.deployObject = true;
+      }
+
+      switch (options.nextwork) {
+        case 'mainnet':
+        case 'testnet':
+            if( options.largePackageAddress !== '0x7' ) {
+                console.warn('Warning: --large-package-address is not supported on mainnet/testnet, using default 0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7');
+                options.largePackageAddress = '0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7';
+            }
+            break;
+        default:
+            break;
+      }
+
       const networkUrl = getNetworkUrl(options.network, options.rpc);
       console.log('Using network URL:', networkUrl);
 
@@ -325,7 +313,7 @@ export function registerCreateCommand(program: Command) {
       try {
         const MAX_SIZE = 60 * 1024; // 60KB
         
-        if (options.deployObject === 'true') {
+        if (options.objectAddress || options.deployObject === true) {
           handleDeployObjectMode(projectDir, options, MAX_SIZE);
         } else {
           handleNormalMode(projectDir, options, MAX_SIZE);
@@ -345,21 +333,21 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
   const buildConfig: BuildConfig = {
     projectDir,
     contractAddressName: options.contractAddressName,
-    senderAddress: options.senderAddress
+    senderAddress: options.senderAddress,
+    additionalArgs: options.additionalArgs,
   };
   
   const buildResult = buildMoveProject(buildConfig);
   
-  const isUpgrade = options.upgrade === 'true';
+  const isUpgrade = options.objectAddress && options.objectAddress !== '';
   const payloadsSim = simulatePayloads(buildResult.metadataChunk, buildResult.codeChunks, maxSize, true, options.largePackageAddress, isUpgrade, options.objectAddress);
-  console.log(`deploy object 模式下，需调用 ${payloadsSim.length} 次 stage_code_chunk`);
-
+  console.log(`Simulated ${payloadsSim.length + 1} payloads`);
   let finalAddress: string;
   
   if (isUpgrade) {
     // 升级模式：使用提供的 object address
     finalAddress = options.objectAddress;
-    console.log('升级模式，使用 object 地址:', finalAddress);
+    console.log('Upgrade mode, using object address:', finalAddress);
   } else {
     // 新建模式：计算新的 object address
     const result = await fetch(`${getNetworkUrl(options.network, options.rpc)}/accounts/${options.senderAddress}/resource/0x1::account::Account`)
@@ -382,17 +370,18 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
         AccountAddress.fromString(options.senderAddress),
         seed
     ).toString();
-    console.log('新建模式，计算得到新地址:', finalAddress);
+    console.log('Create mode, calculated new address:', finalAddress);
   }
 
   const newBuildConfig: BuildConfig = {
     projectDir,
     contractAddressName: options.contractAddressName,
-    senderAddress: finalAddress
+    senderAddress: finalAddress,
+    additionalArgs: options.additionalArgs,
   };
   
   const count = buildAndGeneratePayloads(newBuildConfig, options.output, true, options.largePackageAddress, isUpgrade, isUpgrade ? options.objectAddress : undefined);
-  console.log(`已生成 ${count} 个 payload JSON 文件`);
+  
 }
 
 // 处理普通模式
@@ -400,7 +389,8 @@ function handleNormalMode(projectDir: string, options: any, maxSize: number): vo
   const buildConfig: BuildConfig = {
     projectDir,
     contractAddressName: options.contractAddressName,
-    senderAddress: options.senderAddress
+    senderAddress: options.senderAddress,
+    additionalArgs: options.additionalArgs,
   };
   
   const buildResult = buildMoveProject(buildConfig);
