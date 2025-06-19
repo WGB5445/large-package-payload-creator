@@ -4,12 +4,12 @@ import { execSync } from 'child_process';
 import type { Command } from 'commander';
 import { AccountAddress, createObjectAddress, Serializer } from '@aptos-labs/ts-sdk';
 
-// 检查指定目录下是否有 Move.toml 文件
+// Check if Move.toml exists in the specified directory
 function isMoveProject(dir: string = process.cwd()): boolean {
   return fs.existsSync(path.join(dir, 'Move.toml'));
 }
 
-// 检查系统中是否有 aptos 命令
+// Check if the aptos command exists in the system
 function checkAptosCliExists() {
   try {
     execSync('aptos --version', { stdio: 'ignore' });
@@ -19,7 +19,7 @@ function checkAptosCliExists() {
   }
 }
 
-// 构建结果接口
+// Build result interface
 interface BuildResult {
   metadataChunk: Buffer;
   codeChunks: Buffer[];
@@ -27,7 +27,7 @@ interface BuildResult {
   moduleNames: string[];
 }
 
-// Payload 接口
+// Payload interface
 interface Payload {
   function_id: string;
   type_args: any[];
@@ -37,7 +37,7 @@ interface Payload {
   }>;
 }
 
-// 构建配置接口
+// Build config interface
 interface BuildConfig {
   projectDir: string;
   contractAddressName?: string;
@@ -46,7 +46,7 @@ interface BuildConfig {
 additionalArgs?: string; 
 }
 
-// 解析 Move.toml 获取包名
+// Parse Move.toml to get the package name
 function getPackageName(projectDir: string): string {
   const moveTomlPath = path.join(projectDir, 'Move.toml');
   if (!fs.existsSync(moveTomlPath)) {
@@ -58,11 +58,10 @@ function getPackageName(projectDir: string): string {
   if (!nameMatch || !nameMatch[1]) {
     throw new Error('Package name not found in Move.toml');
   }
-  
   return nameMatch[1];
 }
 
-// 构建命令参数
+// Build command arguments for named addresses
 function buildNamedAddressesArg(config: BuildConfig): string {
   if (config.namedAddresses) {
     return `--named-addresses ${config.namedAddresses}`;
@@ -73,7 +72,7 @@ function buildNamedAddressesArg(config: BuildConfig): string {
   return '';
 }
 
-// 解析构建输出获取模块名
+// Parse build output to get module names
 function parseModuleNames(buildOutput: string): string[] {
   const jsonMatch = buildOutput.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
@@ -95,16 +94,16 @@ function parseModuleNames(buildOutput: string): string[] {
   return [];
 }
 
-// 读取元数据和字节码
+// Read metadata and bytecode
 function readBuildArtifacts(projectDir: string, packageName: string, moduleNames: string[]): { metadataChunk: Buffer; codeChunks: Buffer[] } {
-  // 读取 metadata
+  // Read metadata
   const metadataPath = path.join(projectDir, 'build', packageName, 'package-metadata.bcs');
   if (!fs.existsSync(metadataPath)) {
     throw new Error('package-metadata.bcs not found');
   }
   const metadataChunk = Buffer.from(fs.readFileSync(metadataPath));
 
-  // 读取所有模块字节码
+  // Read all module bytecode
   const bytecodeDir = path.join(projectDir, 'build', packageName, 'bytecode_modules');
   const codeChunks: Buffer[] = [];
   
@@ -119,7 +118,7 @@ function readBuildArtifacts(projectDir: string, packageName: string, moduleNames
   return { metadataChunk, codeChunks };
 }
 
-// 统一的构建函数
+// Unified build function
 function buildMoveProject(config: BuildConfig): BuildResult {
   const namedArg = buildNamedAddressesArg(config);
   const buildCommand = `aptos move build --save-metadata ${namedArg} ${config.additionalArgs? config.additionalArgs: ""}`.trim();
@@ -141,7 +140,7 @@ function buildMoveProject(config: BuildConfig): BuildResult {
   };
 }
 
-// 分批模拟，返回 payloads
+// Simulate in batches, return payloads
 function simulatePayloads(metadataChunk: Buffer, codeChunks: Buffer[], maxSize: number, isObjectDeploy: boolean = false, largePackageAddress: string = "0x7", isUpgrade: boolean = false, objectAddress?: string): Payload[] {
   let idx = 0;
   let isFirst = true;
@@ -162,7 +161,7 @@ function simulatePayloads(metadataChunk: Buffer, codeChunks: Buffer[], maxSize: 
       curSize += chunk.length;
     }
     
-    // 判断是否为最后一次调用
+    // Determine if this is the last call
     const isLastCall = idx >= codeChunks.length;
     
     let functionId = `${largePackageAddress}::large_packages::stage_code_chunk`;
@@ -185,11 +184,11 @@ function simulatePayloads(metadataChunk: Buffer, codeChunks: Buffer[], maxSize: 
     ];
     
     if (isLastCall) {
-      // 最后一次调用时根据部署类型选择不同的函数
+      // For the last call, select different functions based on deployment type
       if (isObjectDeploy) {
         if (isUpgrade) {
           functionId = `${largePackageAddress}::large_packages::stage_code_chunk_and_upgrade_object_code`;
-          // 升级模式需要添加 object address 参数
+          // Upgrade mode requires adding object address parameter
           if (objectAddress) {
             args.push({
               type: "address",
@@ -216,7 +215,7 @@ function simulatePayloads(metadataChunk: Buffer, codeChunks: Buffer[], maxSize: 
   return payloads;
 }
 
-// 生成 payload JSON 文件
+// Generate payload JSON files
 function writePayloads(payloads: Payload[], outDir: string): void {
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
@@ -230,7 +229,7 @@ function writePayloads(payloads: Payload[], outDir: string): void {
   console.log(`Generated ${payloads.length} payload JSON files, saved in ${outDir}`);
 }
 
-// 构建并生成 payloads
+// Build and generate payloads
 function buildAndGeneratePayloads(config: BuildConfig, output?: string, isObjectDeploy: boolean = false, largePackageAddress: string = "0x7", isUpgrade: boolean = false, objectAddress?: string): number {
   try {
     const buildResult = buildMoveProject(config);
@@ -258,7 +257,7 @@ export function registerCreateCommand(program: Command) {
     .option('--large-package-address <address>', 'Address of the large package contract, if devent is 0x7, testnet/mainnet is 0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7', '0x7')
     .option('--object-address <address>', 'Object address for upgrade operations')
     .option('--multi-sign <boolean>', 'Whether to use multi-sign mode (true/false)', false)
-    // 传递给 aptos-cli 的额外参数
+    // Extra arguments passed to aptos-cli
     .option('--additional-args <string>', 'Additional arguments to pass to aptos-cli')
     .action((options, command) => {
       if (process.argv.slice(2).length === 1) {
@@ -266,7 +265,7 @@ export function registerCreateCommand(program: Command) {
         return;
       }
 
-      // 验证环境和参数
+      // Validate environment and parameters
       if (!checkAptosCliExists()) {
         console.error('The "aptos" CLI is not found in your system. Please install it from https://aptos.dev/en/build/cli');
         process.exit(1);
@@ -283,7 +282,7 @@ export function registerCreateCommand(program: Command) {
         process.exit(1);
       }
 
-      // 验证网络选项
+      // Validate network option
       if (options.network && !['mainnet', 'testnet', 'devnet'].includes(options.network)) {
         console.error('Error: --network must be one of: mainnet, testnet, devnet');
         process.exit(1);
@@ -327,9 +326,9 @@ export function registerCreateCommand(program: Command) {
     });
 }
 
-// 处理 deploy object 模式
+// Handle deploy object mode
 async function handleDeployObjectMode(projectDir: string, options: any, maxSize: number): Promise<void> {
-  // 第一步：先 build 一次，拿到 metadataChunk/codeChunks
+  // Step 1: Build once to get metadataChunk/codeChunks
   const buildConfig: BuildConfig = {
     projectDir,
     contractAddressName: options.contractAddressName,
@@ -345,11 +344,11 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
   let finalAddress: string;
   
   if (isUpgrade) {
-    // 升级模式：使用提供的 object address
+    // Upgrade mode: use the provided object address
     finalAddress = options.objectAddress;
     console.log('Upgrade mode, using object address:', finalAddress);
   } else {
-    // 新建模式：计算新的 object address
+    // Create mode: calculate new object address
     const result = await fetch(`${getNetworkUrl(options.network, options.rpc)}/accounts/${options.senderAddress}/resource/0x1::account::Account`)
     let sequences = 0;
 
@@ -384,7 +383,7 @@ async function handleDeployObjectMode(projectDir: string, options: any, maxSize:
   
 }
 
-// 处理普通模式
+// Handle normal mode
 function handleNormalMode(projectDir: string, options: any, maxSize: number): void {
   const buildConfig: BuildConfig = {
     projectDir,
@@ -399,7 +398,7 @@ function handleNormalMode(projectDir: string, options: any, maxSize: number): vo
   writePayloads(payloads, outDir);
 }
 
-// 网络配置映射
+// Network configuration mapping
 const NETWORK_URLS = {
   mainnet: 'https://fullnode.mainnet.aptoslabs.com/v1',
   testnet: 'https://fullnode.testnet.aptoslabs.com/v1',
@@ -408,7 +407,7 @@ const NETWORK_URLS = {
 
 type NetworkType = keyof typeof NETWORK_URLS;
 
-// 获取网络URL
+// Get network URL
 function getNetworkUrl(network?: string, rpc?: string): string {
   if (rpc) {
     return rpc;
@@ -418,5 +417,5 @@ function getNetworkUrl(network?: string, rpc?: string): string {
     return NETWORK_URLS[network as NetworkType];
   }
   
-  return NETWORK_URLS.devnet; // 默认使用 devnet
+  return NETWORK_URLS.devnet; // Default to devnet
 }
