@@ -1,12 +1,13 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
-import type { Command } from "commander";
 import {
   AccountAddress,
   createObjectAddress,
   Serializer,
 } from "@aptos-labs/ts-sdk";
+import yargs, { Argv } from "yargs";
+import { hideBin } from "yargs/helpers";
 
 // Check if Move.toml exists in the specified directory
 function isMoveProject(dir: string = process.cwd()): boolean {
@@ -139,18 +140,24 @@ function readBuildArtifacts(
 }
 
 // Unified build function
-function buildMoveProject(config: BuildConfig): BuildResult {
+function buildMoveProject(config: BuildConfig, outputFormat?: string): BuildResult {
   const namedArg = buildNamedAddressesArg(config);
   const buildCommand =
-    `aptos move build --save-metadata ${namedArg} ${config.additionalArgs ? config.additionalArgs : ""}`.trim();
+    `aptos move build --save-metadata ${namedArg} ${config.additionalArgs ? config.additionalArgs : ""} 2>&1`.trim();
 
-  const buildOutput = execSync(buildCommand, {
+  const execOptions: any = {
     cwd: config.projectDir,
     encoding: "utf-8",
-  });
+  };
+  let buildOutput: string = "";
+  if (outputFormat === "json") {
+    buildOutput = execSync(buildCommand, { ...execOptions, stdio: ["ignore", "pipe", "pipe"] }).toString();
+  } else {
+    buildOutput = execSync(buildCommand, execOptions).toString();
+  }
 
   const packageName = getPackageName(config.projectDir);
-  const moduleNames = parseModuleNames(buildOutput);
+  const moduleNames = parseModuleNames(buildOutput || "");
   const { metadataChunk, codeChunks } = readBuildArtifacts(
     config.projectDir,
     packageName,
@@ -249,7 +256,7 @@ function simulatePayloads(
 }
 
 // Generate payload JSON files
-function writePayloads(payloads: Payload[], outDir: string): void {
+function writePayloads(payloads: Payload[], outDir: string, outputFormat?: string): void {
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
@@ -259,9 +266,11 @@ function writePayloads(payloads: Payload[], outDir: string): void {
     fs.writeFileSync(outPath, JSON.stringify(payload, null, 2), "utf-8");
   });
 
-  console.log(
-    `Generated ${payloads.length} payload JSON files, saved in ${outDir}`,
-  );
+  if (outputFormat !== "json") {
+    console.log(
+      `Generated ${payloads.length} payload JSON files, saved in ${outDir}`,
+    );
+  }
 }
 
 // Build and generate payloads
@@ -272,9 +281,10 @@ function buildAndGeneratePayloads(
   largePackageAddress: string = "0x7",
   isUpgrade: boolean = false,
   objectAddress?: string,
+  outputFormat?: string,
 ): number {
   try {
-    const buildResult = buildMoveProject(config);
+    const buildResult = buildMoveProject(config, outputFormat);
     const MAX_SIZE = 60 * 1024; // 60KB
     const payloads = simulatePayloads(
       buildResult.metadataChunk,
@@ -286,7 +296,7 @@ function buildAndGeneratePayloads(
       objectAddress,
     );
     const outDir = output ? path.dirname(output) : config.projectDir;
-    writePayloads(payloads, outDir);
+    writePayloads(payloads, outDir, outputFormat);
     return payloads.length;
   } catch (err) {
     throw new Error(
@@ -295,217 +305,250 @@ function buildAndGeneratePayloads(
   }
 }
 
-export function registerCreateCommand(program: Command) {
-  program
-    .command("create")
-    .description("Create a new multi-sign payload")
-    .option("-d, --dir <directory>", "Project directory", process.cwd())
-    .option(
-      "--deploy-object <boolean>",
-      "Whether to use object send (true/false)",
-      false,
-    )
-    .option(
-      "--large-package <boolean>",
-      "Whether to use large package send (true/false)",
-      true,
-    )
-    .requiredOption(
-      "--sender-address <address>",
-      "The sender address, required if used",
-    )
-    .requiredOption(
-      "--contract-address-name <string>",
-      'The contract address name , required if used, e.g. "Move.tmol contract = 0x1 is <contract>"',
-    )
-    .option("--rpc <url>", "Custom RPC endpoint URL")
-    .option(
-      "--network <network>",
-      "Network to use (mainnet, testnet, devnet)",
-      "devnet",
-    )
-    .option(
-      "--large-package-address <address>",
-      "Address of the large package contract, if devent is 0x7, testnet/mainnet is 0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7",
-      "0x7",
-    )
-    .option(
-      "--object-address <address>",
-      "Object address for upgrade operations",
-    )
-    .option(
-      "--multi-sign <boolean>",
-      "Whether to use multi-sign mode (true/false)",
-      false,
-    )
-    // Extra arguments passed to aptos-cli
-    .option(
-      "--additional-args <string>",
-      "Additional arguments to pass to aptos-cli",
-    )
-    .action((options, command) => {
-      if (process.argv.slice(2).length === 1) {
-        command.help();
-        return;
-      }
+// ===== Yargs CLI Entrypoint =====
 
-      // Validate environment and parameters
+yargs(hideBin(process.argv))
+  .command(
+    "create",
+    "Create a new multi-sign payload",
+    (yargs: Argv) =>
+      yargs
+        .option("dir", {
+          alias: "d",
+          type: "string",
+          describe: "Project directory",
+          default: process.cwd(),
+        })
+        .option("deploy-object", {
+          type: "boolean",
+          describe: "Whether to use object send",
+          default: false,
+        })
+        .option("large-package", {
+          type: "boolean",
+          describe: "Whether to use large package send",
+          default: true,
+        })
+        .option("sender-address", {
+          type: "string",
+          describe: "The sender address",
+          demandOption: true,
+        })
+        .option("contract-address-name", {
+          type: "string",
+          describe: "The contract address name, e.g. if MyContract=0x1..., MyContract",
+          demandOption: true,
+        })
+        .option("rpc", {
+          type: "string",
+          describe: "Custom RPC endpoint URL",
+        })
+        .option("network", {
+          type: "string",
+          describe: "Network to use (mainnet, testnet, devnet)",
+          default: "devnet",
+          choices: ["mainnet", "testnet", "devnet"],
+        })
+        .option("large-package-address", {
+          type: "string",
+          describe: "Address of the large package contract",
+          default: "0x7",
+        })
+        .option("object-address", {
+          type: "string",
+          describe: "Object address for upgrade operations",
+        })
+        .option("multi-sign", {
+          type: "boolean",
+          describe: "Whether to use multi-sign mode",
+          default: false,
+        })
+        .option("additional-args", {
+          type: "string",
+          describe: "Additional arguments to pass to aptos-cli",
+        })
+        .option("output-format", {
+          type: "string",
+          describe: "Output format: json or default",
+          choices: ["json", "default"],
+          default: "default",
+        }),
+    async (argv: any) => {
+      // 参数预处理
+      const projectDir = argv.dir || process.cwd();
+      const outputFormat = argv.outputFormat || "default";
+      function printJsonResult(result: any) {
+        if (outputFormat === "json") {
+          console.log(JSON.stringify(result));
+        }
+      }
       if (!checkAptosCliExists()) {
-        console.error(
-          'The "aptos" CLI is not found in your system. Please install it from https://aptos.dev/en/build/cli',
-        );
-        process.exit(1);
-      }
-
-      const projectDir = options.dir || process.cwd();
-      if (!isMoveProject(projectDir)) {
-        console.error(
-          `Move.toml not found. The specified directory is not a Move project folder: ${projectDir}`,
-        );
-        process.exit(1);
-      }
-
-      if (!options.contractAddressName) {
-        console.error(
-          "Error: --contract-address-name is required when using this option",
-        );
-        process.exit(1);
-      }
-
-      // Validate network option
-      if (
-        options.network &&
-        !["mainnet", "testnet", "devnet"].includes(options.network)
-      ) {
-        console.error(
-          "Error: --network must be one of: mainnet, testnet, devnet",
-        );
-        process.exit(1);
-      }
-
-      if (options.objectAddress) {
-        options.deployObject = true;
-      }
-
-      switch (options.nextwork) {
-        case "mainnet":
-        case "testnet":
-          if (options.largePackageAddress !== "0x7") {
-            console.warn(
-              "Warning: --large-package-address is not supported on mainnet/testnet, using default 0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7",
-            );
-            options.largePackageAddress =
-              "0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7";
-          }
-          break;
-        default:
-          break;
-      }
-
-      const networkUrl = getNetworkUrl(options.network, options.rpc);
-      console.log("Using network URL:", networkUrl);
-
-      console.log("Creating payload...");
-
-      try {
-        const MAX_SIZE = 60 * 1024; // 60KB
-
-        if (options.objectAddress || options.deployObject === true) {
-          handleDeployObjectMode(projectDir, options, MAX_SIZE);
+        const errMsg =
+          'The "aptos" CLI is not found in your system. Please install it from https://aptos.dev/en/build/cli';
+        if (outputFormat === "json") {
+          printJsonResult({ status: "failure", reason: errMsg });
         } else {
-          handleNormalMode(projectDir, options, MAX_SIZE);
+          console.error(errMsg);
+        }
+        process.exit(1);
+      }
+      if (!isMoveProject(projectDir)) {
+        const errMsg = `Move.toml not found. The specified directory is not a Move project folder: ${projectDir}`;
+        if (outputFormat === "json") {
+          printJsonResult({ status: "failure", reason: errMsg });
+        } else {
+          console.error(errMsg);
+        }
+        process.exit(1);
+      }
+      if (!argv.contractAddressName) {
+        const errMsg = "Error: --contract-address-name is required";
+        if (outputFormat === "json") {
+          printJsonResult({ status: "failure", reason: errMsg });
+        } else {
+          console.error(errMsg);
+        }
+        process.exit(1);
+      }
+      if (argv.objectAddress) {
+        argv.deployObject = true;
+      }
+      if (["mainnet", "testnet"].includes(argv.network)) {
+        if (argv.largePackageAddress === "0x7") {
+          argv.largePackageAddress = "0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7";
+        }
+      }
+      const networkUrl = getNetworkUrl(argv.network, argv.rpc);
+      if (outputFormat !== "json") {
+        console.log("Using network URL:", networkUrl);
+        console.log("Creating payload...");
+      }
+      try {
+        const MAX_SIZE = 60 * 1024;
+        if (argv.objectAddress || argv.deployObject === true) {
+          await handleDeployObjectMode(projectDir, argv, MAX_SIZE, outputFormat, printJsonResult);
+        } else {
+          handleNormalMode(projectDir, argv, MAX_SIZE, outputFormat, printJsonResult);
         }
       } catch (e) {
-        console.error(
-          "Failed to create payload:",
-          e instanceof Error ? e.message : e,
-        );
+        if (outputFormat === "json") {
+          printJsonResult({ status: "failure", reason: e instanceof Error ? e.message : e });
+        } else {
+          console.error("Failed to create payload:", e instanceof Error ? e.message : e);
+        }
         process.exit(1);
       }
-    });
-}
+    },
+  )
+  .demandCommand(1)
+  .help()
+  .strict()
+  .parse();
 
 // Handle deploy object mode
 async function handleDeployObjectMode(
   projectDir: string,
   options: any,
   maxSize: number,
+  outputFormat?: string,
+  printJsonResult?: (result: any) => void,
 ): Promise<void> {
-  // Step 1: Build once to get metadataChunk/codeChunks
-  const buildConfig: BuildConfig = {
-    projectDir,
-    contractAddressName: options.contractAddressName,
-    senderAddress: options.senderAddress,
-    additionalArgs: options.additionalArgs,
-  };
+  try {
+    // Step 1: Build once to get metadataChunk/codeChunks
+    const buildConfig: BuildConfig = {
+      projectDir,
+      contractAddressName: options.contractAddressName,
+      senderAddress: options.senderAddress,
+      additionalArgs: options.additionalArgs,
+    };
 
-  const buildResult = buildMoveProject(buildConfig);
+    const buildResult = buildMoveProject(buildConfig);
 
-  const isUpgrade = options.objectAddress && options.objectAddress !== "";
-  const payloadsSim = simulatePayloads(
-    buildResult.metadataChunk,
-    buildResult.codeChunks,
-    maxSize,
-    true,
-    options.largePackageAddress,
-    isUpgrade,
-    options.objectAddress,
-  );
-  console.log(`Simulated ${payloadsSim.length + 1} payloads`);
-  let finalAddress: string;
-
-  if (isUpgrade) {
-    // Upgrade mode: use the provided object address
-    finalAddress = options.objectAddress;
-    console.log("Upgrade mode, using object address:", finalAddress);
-  } else {
-    // Create mode: calculate new object address
-    const result = await fetch(
-      `${getNetworkUrl(options.network, options.rpc)}/accounts/${options.senderAddress}/resource/0x1::account::Account`,
+    const isUpgrade = options.objectAddress && options.objectAddress !== "";
+    const payloadsSim = simulatePayloads(
+      buildResult.metadataChunk,
+      buildResult.codeChunks,
+      maxSize,
+      true,
+      options.largePackageAddress,
+      isUpgrade,
+      options.objectAddress,
     );
-    let sequences = 0;
-
-    const accountData = await result.json();
-    if (
-      accountData.type === "0x1::account::Account" &&
-      accountData.data &&
-      accountData.data.sequence_number
-    ) {
-      sequences = parseInt(accountData.data.sequence_number, 10);
+    if (outputFormat !== "json") {
+      console.log(`Simulated ${payloadsSim.length} payloads`);
     }
+    let finalAddress: string;
 
-    const ser = new Serializer();
-    ser.serializeBytes(
-      Buffer.from("aptos_framework::object_code_deployment", "utf-8"),
-    );
-    if (options.multiSign === "true") {
-      ser.serializeU64(sequences + 1);
+    if (isUpgrade) {
+      // Upgrade mode: use the provided object address
+      finalAddress = options.objectAddress;
+      if (outputFormat !== "json") {
+        console.log("Upgrade mode, using object address:", finalAddress);
+      }
     } else {
-      ser.serializeU64(sequences + payloadsSim.length);
+      // Create mode: calculate new object address
+      const result = await fetch(
+        `${getNetworkUrl(options.network, options.rpc)}/accounts/${options.senderAddress}/resource/0x1::account::Account`,
+      );
+      let sequences = 0;
+
+      const accountData = await result.json();
+      if (
+        accountData.type === "0x1::account::Account" &&
+        accountData.data &&
+        accountData.data.sequence_number
+      ) {
+        sequences = parseInt(accountData.data.sequence_number, 10);
+      }
+
+      const ser = new Serializer();
+      ser.serializeBytes(
+        Buffer.from("aptos_framework::object_code_deployment", "utf-8"),
+      );
+      if (options.multiSign === "true") {
+        ser.serializeU64(sequences + 1);
+      } else {
+        ser.serializeU64(sequences + payloadsSim.length);
+      }
+      const seed = ser.toUint8Array();
+      finalAddress = createObjectAddress(
+        AccountAddress.fromString(options.senderAddress),
+        seed,
+      ).toString();
+      if (outputFormat !== "json") {
+        console.log("Create mode, calculated new address:", finalAddress);
+      }
     }
-    const seed = ser.toUint8Array();
-    finalAddress = createObjectAddress(
-      AccountAddress.fromString(options.senderAddress),
-      seed,
-    ).toString();
-    console.log("Create mode, calculated new address:", finalAddress);
+
+    const newBuildConfig: BuildConfig = {
+      projectDir,
+      contractAddressName: options.contractAddressName,
+      senderAddress: finalAddress,
+      additionalArgs: options.additionalArgs,
+    };
+
+    const count = buildAndGeneratePayloads(
+      newBuildConfig,
+      options.output,
+      true,
+      options.largePackageAddress,
+      isUpgrade,
+      isUpgrade ? options.objectAddress : undefined,
+      outputFormat
+    );
+    // Find output file names
+    const outDir = options.output ? path.dirname(options.output) : projectDir;
+    const fileNames = Array.from({ length: count }, (_, i) => `payload_${i + 1}.json`);
+    if (outputFormat === "json" && printJsonResult) {
+      printJsonResult({ status: "success", file_names: fileNames });
+    }
+  } catch (err: any) {
+    if (outputFormat === "json" && printJsonResult) {
+      printJsonResult({ status: "failure", reason: err instanceof Error ? err.message : err });
+    } else {
+      throw err;
+    }
   }
-
-  const newBuildConfig: BuildConfig = {
-    projectDir,
-    contractAddressName: options.contractAddressName,
-    senderAddress: finalAddress,
-    additionalArgs: options.additionalArgs,
-  };
-
-  const count = buildAndGeneratePayloads(
-    newBuildConfig,
-    options.output,
-    true,
-    options.largePackageAddress,
-    isUpgrade,
-    isUpgrade ? options.objectAddress : undefined,
-  );
 }
 
 // Handle normal mode
@@ -513,45 +556,59 @@ function handleNormalMode(
   projectDir: string,
   options: any,
   maxSize: number,
+  outputFormat?: string,
+  printJsonResult?: (result: any) => void,
 ): void {
-  const buildConfig: BuildConfig = {
-    projectDir,
-    contractAddressName: options.contractAddressName,
-    senderAddress: options.senderAddress,
-    additionalArgs: options.additionalArgs,
-  };
+  try {
+    const buildConfig: BuildConfig = {
+      projectDir,
+      contractAddressName: options.contractAddressName,
+      senderAddress: options.senderAddress,
+      additionalArgs: options.additionalArgs,
+    };
 
-  const buildResult = buildMoveProject(buildConfig);
-  const payloads = simulatePayloads(
-    buildResult.metadataChunk,
-    buildResult.codeChunks,
-    maxSize,
-    false,
-    options.largePackageAddress,
-    false,
-  );
-  const outDir = options.output ? path.dirname(options.output) : projectDir;
-  writePayloads(payloads, outDir);
+    const buildResult = buildMoveProject(buildConfig);
+    const payloads = simulatePayloads(
+      buildResult.metadataChunk,
+      buildResult.codeChunks,
+      maxSize,
+      false,
+      options.largePackageAddress,
+      false,
+    );
+    const outDir = options.output ? path.dirname(options.output) : projectDir;
+    writePayloads(payloads, outDir, outputFormat);
+    const fileNames = Array.from({ length: payloads.length }, (_, i) => `payload_${i + 1}.json`);
+    if (outputFormat === "json" && printJsonResult) {
+      printJsonResult({ status: "success", file_names: fileNames });
+    }
+  } catch (err: any) {
+    if (outputFormat === "json" && printJsonResult) {
+      printJsonResult({ status: "failure", reason: err instanceof Error ? err.message : err });
+    } else {
+      throw err;
+    }
+  }
 }
 
 // Network configuration mapping
-const NETWORK_URLS = {
-  mainnet: "https://fullnode.mainnet.aptoslabs.com/v1",
-  testnet: "https://fullnode.testnet.aptoslabs.com/v1",
-  devnet: "https://fullnode.devnet.aptoslabs.com/v1",
-} as const;
 
-type NetworkType = keyof typeof NETWORK_URLS;
 
 // Get network URL
-function getNetworkUrl(network?: string, rpc?: string): string {
+function getNetworkUrl(
+  network?: "mainnet" | "testnet" | "devnet",
+  rpc?: string
+): string {
   if (rpc) {
     return rpc;
   }
-
-  if (network && network in NETWORK_URLS) {
-    return NETWORK_URLS[network as NetworkType];
+  const NETWORK_URLS = {
+    "mainnet": "https://fullnode.mainnet.aptoslabs.com/v1",
+    "testnet": "https://fullnode.testnet.aptoslabs.com/v1",
+    "devnet": "https://fullnode.devnet.aptoslabs.com/v1"
+  };
+  if (network && NETWORK_URLS[network]) {
+    return NETWORK_URLS[network];
   }
-
   return NETWORK_URLS.devnet; // Default to devnet
 }
