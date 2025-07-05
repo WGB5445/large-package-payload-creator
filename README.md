@@ -33,6 +33,7 @@ large-package-payload-creator create [options]
 - `--large-package-address <address>`: Address of the large package contract (devnet default 0x7, testnet/mainnet default 0x0e1ca3...cce7) | 大包合约地址（devnet 默认 0x7，testnet/mainnet 默认 0x0e1ca3...cce7）
 - `--object-address <address>`: Object address for upgrade operations | 对象地址（升级操作时必填）
 - `--additional-args <string>`: Additional arguments to pass to aptos-cli | 传递给 aptos-cli 的额外参数
+- `--output-format <string>`: Output format: `json` or `default` (default: `default`). If set to `json`, only a final JSON result will be printed, and all intermediate logs and build output will be suppressed. | 输出格式：`json` 或 `default`（默认：`default`）。为 `json` 时只输出最终 JSON 结果，所有中间日志和编译输出均被抑制
 
 ## Example
 
