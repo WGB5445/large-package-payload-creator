@@ -4,10 +4,12 @@ import { execSync } from "child_process";
 import {
   AccountAddress,
   createObjectAddress,
+  Deserializer,
   Serializer,
 } from "@aptos-labs/ts-sdk";
 import yargs, { Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
+import { PackageMetadata } from "@wgb5445/aptos-move-package-metadata";
 
 // Check if Move.toml exists in the specified directory
 function isMoveProject(dir: string = process.cwd()): boolean {
@@ -79,34 +81,11 @@ function buildNamedAddressesArg(config: BuildConfig): string {
   return "";
 }
 
-// Parse build output to get module names
-function parseModuleNames(buildOutput: string): string[] {
-  const jsonMatch = buildOutput.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    return [];
-  }
-
-  try {
-    const buildJson = JSON.parse(jsonMatch[0]);
-    if (Array.isArray(buildJson.Result)) {
-      return buildJson.Result.map((item: any) => {
-        const match = item.match(/::(\w+)$/);
-        return match ? match[1] : null;
-      }).filter(Boolean);
-    }
-  } catch (err) {
-    console.warn("Failed to parse build output JSON:", err);
-  }
-
-  return [];
-}
-
 // Read metadata and bytecode
 function readBuildArtifacts(
   projectDir: string,
   packageName: string,
-  moduleNames: string[],
-): { metadataChunk: Buffer; codeChunks: Buffer[] } {
+): { metadataChunk: Buffer; codeChunks: Buffer[]; moduleNames: string[] } {
   // Read metadata
   const metadataPath = path.join(
     projectDir,
@@ -118,6 +97,10 @@ function readBuildArtifacts(
     throw new Error("package-metadata.bcs not found");
   }
   const metadataChunk = Buffer.from(fs.readFileSync(metadataPath));
+
+  const moduleNames = PackageMetadata.deserialize(
+    new Deserializer(metadataChunk),
+  ).modules.map((m) => m.name);
 
   // Read all module bytecode
   const bytecodeDir = path.join(
@@ -136,40 +119,53 @@ function readBuildArtifacts(
     codeChunks.push(Buffer.from(fs.readFileSync(modPath)));
   }
 
-  return { metadataChunk, codeChunks };
+  return { metadataChunk, codeChunks, moduleNames };
 }
 
 // Unified build function
-function buildMoveProject(config: BuildConfig, outputFormat?: string): BuildResult {
-  const namedArg = buildNamedAddressesArg(config);
-  const buildCommand =
-    `aptos move build --save-metadata ${namedArg} ${config.additionalArgs ? config.additionalArgs : ""} 2>&1`.trim();
-
-  const execOptions: any = {
-    cwd: config.projectDir,
-    encoding: "utf-8",
-  };
-  let buildOutput: string = "";
-  if (outputFormat === "json") {
-    buildOutput = execSync(buildCommand, { ...execOptions, stdio: ["ignore", "pipe", "pipe"] }).toString();
+function buildMoveProject(
+  config: BuildConfig,
+  outputFormat?: string,
+  skipBuild?: boolean,
+): BuildResult {
+  if (skipBuild) {
+    const packageName = getPackageName(config.projectDir);
+    const { metadataChunk, codeChunks, moduleNames } = readBuildArtifacts(
+      config.projectDir,
+      packageName,
+    );
+    return { metadataChunk, codeChunks, packageName, moduleNames };
   } else {
-    buildOutput = execSync(buildCommand, execOptions).toString();
+    const namedArg = buildNamedAddressesArg(config);
+    const buildCommand =
+      `aptos move build --save-metadata ${namedArg} ${config.additionalArgs ? config.additionalArgs : ""} 2>&1`.trim();
+
+    const execOptions: any = {
+      cwd: config.projectDir,
+      encoding: "utf-8",
+    };
+    let buildOutput: string = "";
+    if (outputFormat === "json") {
+      buildOutput = execSync(buildCommand, {
+        ...execOptions,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).toString();
+    } else {
+      buildOutput = execSync(buildCommand, execOptions).toString();
+    }
+
+    const packageName = getPackageName(config.projectDir);
+    const { metadataChunk, codeChunks, moduleNames } = readBuildArtifacts(
+      config.projectDir,
+      packageName,
+    );
+    return {
+      metadataChunk,
+      codeChunks,
+      packageName,
+      moduleNames,
+    };
   }
-
-  const packageName = getPackageName(config.projectDir);
-  const moduleNames = parseModuleNames(buildOutput || "");
-  const { metadataChunk, codeChunks } = readBuildArtifacts(
-    config.projectDir,
-    packageName,
-    moduleNames,
-  );
-
-  return {
-    metadataChunk,
-    codeChunks,
-    packageName,
-    moduleNames,
-  };
 }
 
 // Simulate in batches, return payloads
@@ -256,7 +252,11 @@ function simulatePayloads(
 }
 
 // Generate payload JSON files
-function writePayloads(payloads: Payload[], outDir: string, outputFormat?: string): void {
+function writePayloads(
+  payloads: Payload[],
+  outDir: string,
+  outputFormat?: string,
+): void {
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
@@ -282,9 +282,10 @@ function buildAndGeneratePayloads(
   isUpgrade: boolean = false,
   objectAddress?: string,
   outputFormat?: string,
+  skipBuild?: boolean,
 ): number {
   try {
-    const buildResult = buildMoveProject(config, outputFormat);
+    const buildResult = buildMoveProject(config, outputFormat, skipBuild);
     const MAX_SIZE = 60 * 1024; // 60KB
     const payloads = simulatePayloads(
       buildResult.metadataChunk,
@@ -336,7 +337,8 @@ yargs(hideBin(process.argv))
         })
         .option("contract-address-name", {
           type: "string",
-          describe: "The contract address name, e.g. if MyContract=0x1..., MyContract",
+          describe:
+            "The contract address name, e.g. if MyContract=0x1..., MyContract",
           demandOption: true,
         })
         .option("rpc", {
@@ -372,6 +374,12 @@ yargs(hideBin(process.argv))
           describe: "Output format: json or default",
           choices: ["json", "default"],
           default: "default",
+        })
+        .option("skip-build", {
+          type: "boolean",
+          describe:
+            "Skip the 'aptos move build' step and use existing build artifacts",
+          default: false,
         }),
     async (argv: any) => {
       // 参数预处理
@@ -382,7 +390,7 @@ yargs(hideBin(process.argv))
           console.log(JSON.stringify(result));
         }
       }
-      if (!checkAptosCliExists()) {
+      if (!checkAptosCliExists() && !argv.skipBuild) {
         const errMsg =
           'The "aptos" CLI is not found in your system. Please install it from https://aptos.dev/en/build/cli';
         if (outputFormat === "json") {
@@ -415,7 +423,8 @@ yargs(hideBin(process.argv))
       }
       if (["mainnet", "testnet"].includes(argv.network)) {
         if (argv.largePackageAddress === "0x7") {
-          argv.largePackageAddress = "0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7";
+          argv.largePackageAddress =
+            "0x0e1ca3011bdd07246d4d16d909dbb2d6953a86c4735d5acf5865d962c630cce7";
         }
       }
       const networkUrl = getNetworkUrl(argv.network, argv.rpc);
@@ -426,15 +435,35 @@ yargs(hideBin(process.argv))
       try {
         const MAX_SIZE = 60 * 1024;
         if (argv.objectAddress || argv.deployObject === true) {
-          await handleDeployObjectMode(projectDir, argv, MAX_SIZE, outputFormat, printJsonResult);
+          await handleDeployObjectMode(
+            projectDir,
+            argv,
+            MAX_SIZE,
+            outputFormat,
+            printJsonResult,
+            argv.skipBuild,
+          );
         } else {
-          handleNormalMode(projectDir, argv, MAX_SIZE, outputFormat, printJsonResult);
+          handleNormalMode(
+            projectDir,
+            argv,
+            MAX_SIZE,
+            outputFormat,
+            printJsonResult,
+            argv.skipBuild,
+          );
         }
       } catch (e) {
         if (outputFormat === "json") {
-          printJsonResult({ status: "failure", reason: e instanceof Error ? e.message : e });
+          printJsonResult({
+            status: "failure",
+            reason: e instanceof Error ? e.message : e,
+          });
         } else {
-          console.error("Failed to create payload:", e instanceof Error ? e.message : e);
+          console.error(
+            "Failed to create payload:",
+            e instanceof Error ? e.message : e,
+          );
         }
         process.exit(1);
       }
@@ -452,6 +481,7 @@ async function handleDeployObjectMode(
   maxSize: number,
   outputFormat?: string,
   printJsonResult?: (result: any) => void,
+  skipBuild?: boolean,
 ): Promise<void> {
   try {
     // Step 1: Build once to get metadataChunk/codeChunks
@@ -462,7 +492,7 @@ async function handleDeployObjectMode(
       additionalArgs: options.additionalArgs,
     };
 
-    const buildResult = buildMoveProject(buildConfig);
+    const buildResult = buildMoveProject(buildConfig, outputFormat, skipBuild);
 
     const isUpgrade = options.objectAddress && options.objectAddress !== "";
     const payloadsSim = simulatePayloads(
@@ -534,17 +564,24 @@ async function handleDeployObjectMode(
       options.largePackageAddress,
       isUpgrade,
       isUpgrade ? options.objectAddress : undefined,
-      outputFormat
+      outputFormat,
+      options.skipBuild,
     );
     // Find output file names
     const outDir = options.output ? path.dirname(options.output) : projectDir;
-    const fileNames = Array.from({ length: count }, (_, i) => `payload_${i + 1}.json`);
+    const fileNames = Array.from(
+      { length: count },
+      (_, i) => `payload_${i + 1}.json`,
+    );
     if (outputFormat === "json" && printJsonResult) {
       printJsonResult({ status: "success", file_names: fileNames });
     }
   } catch (err: any) {
     if (outputFormat === "json" && printJsonResult) {
-      printJsonResult({ status: "failure", reason: err instanceof Error ? err.message : err });
+      printJsonResult({
+        status: "failure",
+        reason: err instanceof Error ? err.message : err,
+      });
     } else {
       throw err;
     }
@@ -558,6 +595,7 @@ function handleNormalMode(
   maxSize: number,
   outputFormat?: string,
   printJsonResult?: (result: any) => void,
+  skipBuild?: boolean,
 ): void {
   try {
     const buildConfig: BuildConfig = {
@@ -567,7 +605,7 @@ function handleNormalMode(
       additionalArgs: options.additionalArgs,
     };
 
-    const buildResult = buildMoveProject(buildConfig);
+    const buildResult = buildMoveProject(buildConfig, outputFormat, skipBuild);
     const payloads = simulatePayloads(
       buildResult.metadataChunk,
       buildResult.codeChunks,
@@ -578,13 +616,19 @@ function handleNormalMode(
     );
     const outDir = options.output ? path.dirname(options.output) : projectDir;
     writePayloads(payloads, outDir, outputFormat);
-    const fileNames = Array.from({ length: payloads.length }, (_, i) => `payload_${i + 1}.json`);
+    const fileNames = Array.from(
+      { length: payloads.length },
+      (_, i) => `payload_${i + 1}.json`,
+    );
     if (outputFormat === "json" && printJsonResult) {
       printJsonResult({ status: "success", file_names: fileNames });
     }
   } catch (err: any) {
     if (outputFormat === "json" && printJsonResult) {
-      printJsonResult({ status: "failure", reason: err instanceof Error ? err.message : err });
+      printJsonResult({
+        status: "failure",
+        reason: err instanceof Error ? err.message : err,
+      });
     } else {
       throw err;
     }
@@ -593,19 +637,18 @@ function handleNormalMode(
 
 // Network configuration mapping
 
-
 // Get network URL
 function getNetworkUrl(
   network?: "mainnet" | "testnet" | "devnet",
-  rpc?: string
+  rpc?: string,
 ): string {
   if (rpc) {
     return rpc;
   }
   const NETWORK_URLS = {
-    "mainnet": "https://fullnode.mainnet.aptoslabs.com/v1",
-    "testnet": "https://fullnode.testnet.aptoslabs.com/v1",
-    "devnet": "https://fullnode.devnet.aptoslabs.com/v1"
+    mainnet: "https://fullnode.mainnet.aptoslabs.com/v1",
+    testnet: "https://fullnode.testnet.aptoslabs.com/v1",
+    devnet: "https://fullnode.devnet.aptoslabs.com/v1",
   };
   if (network && NETWORK_URLS[network]) {
     return NETWORK_URLS[network];
